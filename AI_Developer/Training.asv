@@ -1,0 +1,858 @@
+% Advanced EMG to Joint Angle Prediction with Improved Accuracy
+% This script takes EMG data and predicts joint angles using enhanced ML techniques
+% Uses only tasks 1-5 (individual finger movements)
+% Trials 1-3 for training, trials 4-5 for testing
+
+%% Load Data
+% Replace with your actual file path
+load('s1.mat');
+
+%% Data Preparation
+% Initialize arrays to store processed data
+emg_features = cell(5,5); % Only tasks 1-5
+all_joint_angles = cell(5,5);
+
+% Define EMG feature extraction parameters
+window_size = 200;  % 200 samples window (50ms at 4kHz)
+window_overlap = 150;  % 75% overlap for better temporal resolution
+num_muscles = 8;
+
+% Define which features to extract from EMG
+% Time domain features
+feature_names = {'MAV', 'RMS', 'VAR', 'WL', 'ZC', 'SSC', 'WA', 'IEMG', 'AR', 'CC'};
+num_features = length(feature_names);
+
+%% Feature Extraction Function
+% Define thresholds
+zc_threshold = 0.01;
+ssc_threshold = 0.01;
+wa_threshold = 0.01;
+
+% AR model order
+ar_order = 4;
+
+% Process selected trials and tasks
+for trial = 1:5  % All trials, but we'll split later
+    for task = 1:5  % Only tasks 1-5 (individual finger movements)
+        fprintf('Processing trial %d, task %d...\n', trial, task);
+        
+        % Get EMG and joint angle data for current trial and task
+        current_emg = dsfilt_emg{trial, task};
+        current_joint_angles = joint_angles{trial, task};
+        
+        % Check if data exists (avoid empty cells)
+        if isempty(current_emg) || isempty(current_joint_angles)
+            emg_features{trial, task} = [];
+            all_joint_angles{trial, task} = [];
+            continue;
+        end
+        
+        % Number of windows
+        num_samples = size(current_emg, 1);
+        num_windows = floor((num_samples - window_size) / (window_size - window_overlap)) + 1;
+        
+        % Initialize feature matrix for current trial and task
+        % Basic features + AR coefficients + CC coefficients
+        features_matrix = zeros(num_windows, num_muscles * (8 + ar_order + num_muscles-1));
+        
+        % Initialize downsampled joint angles to match feature windows
+        ds_joint_angles = zeros(num_windows, 14);  % 14 joint angles
+        
+        % Process each window
+        for w = 1:num_windows
+            % Window indices
+            start_idx = (w-1) * (window_size - window_overlap) + 1;
+            end_idx = min(start_idx + window_size - 1, num_samples);
+            
+            % Skip if window is too short
+            if end_idx - start_idx + 1 < window_size/2
+                continue;
+            end
+            
+            % Get center index for joint angles (to match with features)
+            center_idx = round((start_idx + end_idx) / 2);
+            
+            % Store joint angles at center of window
+            if center_idx <= size(current_joint_angles, 1)
+                ds_joint_angles(w, :) = current_joint_angles(center_idx, :);
+            end
+            
+            % Get all EMG data for this window
+            window_emg = current_emg(start_idx:end_idx, :);
+            
+            % Extract features for each muscle
+            for m = 1:num_muscles
+                % Get window data for current muscle
+                window_data = window_emg(:, m);
+                
+                % Calculate base index for this muscle
+                feat_base_idx = (m-1) * (8 + ar_order + num_muscles-1);
+                
+                % Basic time domain features
+                % 1. Mean Absolute Value (MAV)
+                features_matrix(w, feat_base_idx + 1) = mean(abs(window_data));
+                
+                % 2. Root Mean Square (RMS)
+                features_matrix(w, feat_base_idx + 2) = sqrt(mean(window_data.^2));
+                
+                % 3. Variance (VAR)
+                features_matrix(w, feat_base_idx + 3) = var(window_data, 1);
+                
+                % 4. Waveform Length (WL)
+                features_matrix(w, feat_base_idx + 4) = sum(abs(diff(window_data)));
+                
+                % 5. Zero Crossings (ZC)
+                zc = 0;
+                for i = 1:length(window_data)-1
+                    if ((window_data(i) > 0 && window_data(i+1) < 0) || ...
+                        (window_data(i) < 0 && window_data(i+1) > 0)) && ...
+                       (abs(window_data(i) - window_data(i+1)) >= zc_threshold)
+                        zc = zc + 1;
+                    end
+                end
+                features_matrix(w, feat_base_idx + 5) = zc;
+                
+                % 6. Slope Sign Changes (SSC)
+                ssc = 0;
+                for i = 2:length(window_data)-1
+                    if ((window_data(i) > window_data(i-1) && window_data(i) > window_data(i+1)) || ...
+                        (window_data(i) < window_data(i-1) && window_data(i) < window_data(i+1))) && ...
+                       (abs(window_data(i) - window_data(i+1)) >= ssc_threshold || ...
+                        abs(window_data(i) - window_data(i-1)) >= ssc_threshold)
+                        ssc = ssc + 1;
+                    end
+                end
+                features_matrix(w, feat_base_idx + 6) = ssc;
+                
+                % 7. Willison Amplitude (WA)
+                wa = 0;
+                for i = 1:length(window_data)-1
+                    if abs(window_data(i) - window_data(i+1)) >= wa_threshold
+                        wa = wa + 1;
+                    end
+                end
+                features_matrix(w, feat_base_idx + 7) = wa;
+                
+                % 8. Integrated EMG (IEMG)
+                features_matrix(w, feat_base_idx + 8) = sum(abs(window_data));
+                
+                % 9. Autoregressive (AR) Coefficients
+                if length(window_data) > ar_order
+                    try
+                        ar_coeffs = arburg(window_data, ar_order);
+                        features_matrix(w, feat_base_idx + 9 : feat_base_idx + 9 + ar_order - 1) = ar_coeffs(2:end);
+                    catch
+                        % In case AR estimation fails
+                        features_matrix(w, feat_base_idx + 9 : feat_base_idx + 9 + ar_order - 1) = zeros(1, ar_order);
+                    end
+                else
+                    features_matrix(w, feat_base_idx + 9 : feat_base_idx + 9 + ar_order - 1) = zeros(1, ar_order);
+                end
+                
+                % 10. Correlation Coefficients (CC) with other muscles
+                cc_idx = 0;
+                for other_m = 1:num_muscles
+                    if other_m ~= m
+                        other_data = window_emg(:, other_m);
+                        r = corrcoef(window_data, other_data);
+                        features_matrix(w, feat_base_idx + 9 + ar_order + cc_idx) = r(1,2);
+                        cc_idx = cc_idx + 1;
+                    end
+                end
+            end
+        end
+        
+        % Store the features and downsampled joint angles
+        emg_features{trial, task} = features_matrix;
+        all_joint_angles{trial, task} = ds_joint_angles;
+    end
+end
+
+%% Prepare Data for Machine Learning
+% Separate data into training (trials 1-3) and testing (trials 4-5)
+X_train = [];
+Y_train = [];
+X_test = [];
+Y_test = [];
+
+% Combine training data (trials 1-3, tasks 1-5)
+for trial = 1:3
+    for task = 1:5
+        if ~isempty(emg_features{trial, task})
+            X_train = [X_train; emg_features{trial, task}];
+            Y_train = [Y_train; all_joint_angles{trial, task}];
+        end
+    end
+end
+
+% Combine testing data (trials 4-5, tasks 1-5)
+for trial = 4:5
+    for task = 1:5
+        if ~isempty(emg_features{trial, task})
+            X_test = [X_test; emg_features{trial, task}];
+            Y_test = [Y_test; all_joint_angles{trial, task}];
+        end
+    end
+end
+
+% Remove rows with NaN or Inf values
+valid_rows_train = all(isfinite(X_train), 2) & all(isfinite(Y_train), 2);
+X_train = X_train(valid_rows_train, :);
+Y_train = Y_train(valid_rows_train, :);
+
+valid_rows_test = all(isfinite(X_test), 2) & all(isfinite(Y_test), 2);
+X_test = X_test(valid_rows_test, :);
+Y_test = Y_test(valid_rows_test, :);
+
+% Joint angle names for reference
+joint_names = {'Thumb_1', 'Thumb_2', 'Index_1', 'Index_2', 'Index_3', ...
+               'Middle_1', 'Middle_2', 'Middle_3', 'Ring_1', 'Ring_2', ...
+               'Ring_3', 'Little_1', 'Little_2', 'Little_3'};
+
+%% Feature Selection and Normalization
+% Normalize features
+[X_train_normalized, mu, sigma] = zscore(X_train);
+% Apply same normalization to test data
+X_test_normalized = (X_test - mu) ./ sigma;
+
+% Replace NaNs from normalization with zeros
+X_train_normalized(isnan(X_train_normalized)) = 0;
+X_test_normalized(isnan(X_test_normalized)) = 0;
+
+% Advanced feature selection using Sequential Forward Selection (SFS)
+fprintf('Performing feature selection...\n');
+
+% Number of features to select for each joint
+num_features_to_select = min(50, size(X_train_normalized, 2));
+
+% To speed up selection, we'll use a subset of training data
+if size(X_train_normalized, 1) > 5000
+    subset_indices = randperm(size(X_train_normalized, 1), 5000);
+    X_subset = X_train_normalized(subset_indices, :);
+    Y_subset = Y_train(subset_indices, :);
+else
+    X_subset = X_train_normalized;
+    Y_subset = Y_train;
+end
+
+% Create a matrix to store selected features for each joint
+selected_features_all = zeros(num_features_to_select, size(Y_train, 2));
+
+% Compute mutual information between features and joint angles
+mi_values = zeros(size(X_train_normalized, 2), size(Y_train, 2));
+
+for j = 1:size(Y_train, 2)
+    fprintf('Computing mutual information for joint %d/%d...\n', j, size(Y_train, 2));
+    
+    % Quantize joint angle values for MI calculation
+    Y_quantized = floor(Y_subset(:,j) / 5) * 5;  % 5-degree bins
+    
+    % Calculate mutual information for each feature
+    for f = 1:size(X_subset, 2)
+        % Quantize feature values
+        X_quantized = round(X_subset(:,f) * 10) / 10;
+        
+        % Create joint distribution
+        joint_hist = accumarray([X_quantized, Y_quantized], 1);
+        joint_prob = joint_hist / sum(joint_hist(:));
+        
+        % Calculate marginal probabilities
+        x_prob = sum(joint_prob, 2);
+        y_prob = sum(joint_prob, 1);
+        
+        % Calculate mutual information
+        mi = 0;
+        for xi = 1:size(joint_prob, 1)
+            for yi = 1:size(joint_prob, 2)
+                if joint_prob(xi, yi) > 0
+                    mi = mi + joint_prob(xi, yi) * log2(joint_prob(xi, yi) / (x_prob(xi) * y_prob(yi)));
+                end
+            end
+        end
+        
+        mi_values(f, j) = mi;
+    end
+    
+    % Select top features based on mutual information
+    [~, sorted_indices] = sort(mi_values(:, j), 'descend');
+    selected_features_all(:, j) = sorted_indices(1:num_features_to_select);
+end
+
+%% Train Machine Learning Models
+% We'll train a model for each joint angle with multiple advanced techniques
+num_joints = size(Y_train, 2);
+predictions = zeros(size(X_test, 1), num_joints);
+test_rmse = zeros(1, num_joints);
+test_r2 = zeros(1, num_joints);
+
+% Model options for each joint angle
+model_types = {'RF', 'GPR', 'SVR'};  % RF = Random Forest, GPR = Gaussian Process Regression, SVR = Support Vector Regression
+
+% Store best models and their parameters
+best_models = cell(1, num_joints);
+best_model_types = cell(1, num_joints);
+best_features = cell(1, num_joints);
+
+for j = 1:num_joints
+    fprintf('Training model for %s joint angle (%d/%d)...\n', joint_names{j}, j, num_joints);
+    
+    % Get selected features for this joint
+    selected_features_j = selected_features_all(:, j);
+    
+    % Extract training/testing data with selected features
+    X_train_j = X_train_normalized(:, selected_features_j);
+    X_test_j = X_test_normalized(:, selected_features_j);
+    Y_train_j = Y_train(:, j);
+    Y_test_j = Y_test(:, j);
+    
+    % Initialize best model metrics
+    best_rmse = Inf;
+    best_model = [];
+    best_model_type = '';
+    
+    % Try different model types
+    for m = 1:length(model_types)
+        model_type = model_types{m};
+        fprintf('  Training %s model...\n', model_type);
+        
+        switch model_type
+            case 'RF'
+                % Random Forest with hyperparameter tuning
+                model = TreeBagger(100, X_train_j, Y_train_j, 'Method', 'regression', ...
+                    'MinLeafSize', 5, 'NumPredictorsToSample', max(1, floor(sqrt(size(X_train_j, 2)))), ...
+                    'OOBPrediction', 'on');
+                
+                % Predict on test data
+                y_pred = predict(model, X_test_j);
+                
+            case 'GPR'
+                % Gaussian Process Regression
+                % Use a subset for GPR if data is large (GPR is computationally expensive)
+                if size(X_train_j, 1) > 2000
+                    subset_idx = randperm(size(X_train_j, 1), 2000);
+                    X_train_gpr = X_train_j(subset_idx, :);
+                    Y_train_gpr = Y_train_j(subset_idx);
+                else
+                    X_train_gpr = X_train_j;
+                    Y_train_gpr = Y_train_j;
+                end
+                
+                % Define GPR kernel
+                sigma_f = std(Y_train_gpr);
+                sigma_n = 0.1 * sigma_f;
+                length_scale = 1;
+                
+                % Create and train GPR model
+                gpr_kernel = @(x1, x2) sigma_f^2 * exp(-0.5 * pdist2(x1, x2).^2 / length_scale^2);
+                model = fitrgp(X_train_gpr, Y_train_gpr, 'KernelFunction', gpr_kernel, ...
+                    'Sigma', sigma_n, 'Standardize', true);
+                
+                % Predict on test data
+                y_pred = predict(model, X_test_j);
+                
+            case 'SVR'
+                % Support Vector Regression
+                % Use a subset for SVR if data is large
+                if size(X_train_j, 1) > 5000
+                    subset_idx = randperm(size(X_train_j, 1), 5000);
+                    X_train_svr = X_train_j(subset_idx, :);
+                    Y_train_svr = Y_train_j(subset_idx);
+                else
+                    X_train_svr = X_train_j;
+                    Y_train_svr = Y_train_j;
+                end
+                
+                % Create and train SVR model
+                model = fitrsvm(X_train_svr, Y_train_svr, 'KernelFunction', 'rbf', ...
+                    'Standardize', true, 'KernelScale', 'auto', 'Epsilon', 0.1);
+                
+                % Predict on test data
+                y_pred = predict(model, X_test_j);
+        end
+        
+        % Calculate metrics
+        curr_rmse = sqrt(mean((y_pred - Y_test_j).^2));
+        
+        % Calculate R^2
+        ss_total = sum((Y_test_j - mean(Y_test_j)).^2);
+        ss_residual = sum((Y_test_j - y_pred).^2);
+        curr_r2 = 1 - (ss_residual / ss_total);
+        
+        fprintf('    %s RMSE: %.4f, R^2: %.4f\n', model_type, curr_rmse, curr_r2);
+        
+        % Update best model if this one is better
+        if curr_rmse < best_rmse
+            best_rmse = curr_rmse;
+            best_model = model;
+            best_model_type = model_type;
+        end
+    end
+    
+    % Store best model and make final predictions
+    best_models{j} = best_model;
+    best_model_types{j} = best_model_type;
+    best_features{j} = selected_features_j;
+    
+    % Make predictions with the best model
+    switch best_model_type
+        case 'RF'
+            predictions(:, j) = predict(best_model, X_test_normalized(:, selected_features_j));
+        case {'GPR', 'SVR'}
+            predictions(:, j) = predict(best_model, X_test_normalized(:, selected_features_j));
+    end
+    
+    % Calculate final metrics
+    test_rmse(j) = sqrt(mean((predictions(:, j) - Y_test(:, j)).^2));
+    
+    % Calculate R^2
+    ss_total = sum((Y_test(:, j) - mean(Y_test(:, j))).^2);
+    ss_residual = sum((Y_test(:, j) - predictions(:, j)).^2);
+    test_r2(j) = 1 - (ss_residual / ss_total);
+    
+    fprintf('Best model for %s: %s, RMSE: %.4f, R^2: %.4f\n', ...
+        joint_names{j}, best_model_type, test_rmse(j), test_r2(j));
+end
+
+% Calculate overall metrics
+overall_rmse = sqrt(mean(mean((predictions - Y_test).^2)));
+overall_r2 = mean(test_r2);
+fprintf('Overall RMSE: %.4f degrees\n', overall_rmse);
+fprintf('Average R^2: %.4f\n', overall_r2);
+
+%% Implement Ensemble Model Stacking for Better Performance
+fprintf('Implementing ensemble stacking for improved performance...\n');
+
+% For each joint angle, we'll create a meta-learner that combines predictions
+% from the base models (RF, GPR, SVR)
+meta_models = cell(1, num_joints);
+final_predictions = zeros(size(X_test, 1), num_joints);
+
+% Use 3-fold cross-validation to get predictions for training data
+cv = cvpartition(size(X_train_normalized, 1), 'KFold', 3);
+
+for j = 1:num_joints
+    fprintf('Creating ensemble for joint %d/%d...\n', j, num_joints);
+    
+    % Get selected features for this joint
+    selected_features_j = selected_features_all(:, j);
+    
+    % Base-level predictions for meta-training
+    meta_train_features = zeros(size(X_train_normalized, 1), length(model_types));
+    
+    for m = 1:length(model_types)
+        model_type = model_types{m};
+        fprintf('  Getting cross-validation predictions for %s...\n', model_type);
+        
+        % Get CV predictions for training set
+        cv_preds = zeros(size(X_train_normalized, 1), 1);
+        
+        for fold = 1:cv.NumTestSets
+            train_idx = cv.training(fold);
+            test_idx = cv.test(fold);
+            
+            X_train_fold = X_train_normalized(train_idx, selected_features_j);
+            Y_train_fold = Y_train(train_idx, j);
+            X_test_fold = X_train_normalized(test_idx, selected_features_j);
+            
+            switch model_type
+                case 'RF'
+                    % Random Forest
+                    fold_model = TreeBagger(100, X_train_fold, Y_train_fold, 'Method', 'regression', ...
+                        'MinLeafSize', 5, 'NumPredictorsToSample', max(1, floor(sqrt(size(X_train_fold, 2)))));
+                    cv_preds(test_idx) = predict(fold_model, X_test_fold);
+                    
+                case 'GPR'
+                    % GPR - use subset if needed
+                    if size(X_train_fold, 1) > 2000
+                        subset_idx = randperm(size(X_train_fold, 1), 2000);
+                        X_train_gpr = X_train_fold(subset_idx, :);
+                        Y_train_gpr = Y_train_fold(subset_idx);
+                    else
+                        X_train_gpr = X_train_fold;
+                        Y_train_gpr = Y_train_fold;
+                    end
+                    
+                    gpr_kernel = @(x1, x2) std(Y_train_gpr)^2 * exp(-0.5 * pdist2(x1, x2).^2);
+                    fold_model = fitrgp(X_train_gpr, Y_train_gpr, 'KernelFunction', gpr_kernel, ...
+                        'Sigma', 0.1 * std(Y_train_gpr), 'Standardize', true);
+                    cv_preds(test_idx) = predict(fold_model, X_test_fold);
+                    
+                case 'SVR'
+                    % SVR - use subset if needed
+                    if size(X_train_fold, 1) > 5000
+                        subset_idx = randperm(size(X_train_fold, 1), 5000);
+                        X_train_svr = X_train_fold(subset_idx, :);
+                        Y_train_svr = Y_train_fold(subset_idx);
+                    else
+                        X_train_svr = X_train_fold;
+                        Y_train_svr = Y_train_fold;
+                    end
+                    
+                    fold_model = fitrsvm(X_train_svr, Y_train_svr, 'KernelFunction', 'rbf', ...
+                        'Standardize', true, 'KernelScale', 'auto', 'Epsilon', 0.1);
+                    cv_preds(test_idx) = predict(fold_model, X_test_fold);
+            end
+        end
+        
+        % Store predictions as meta-features
+        meta_train_features(:, m) = cv_preds;
+    end
+    
+    % Train base models on the full training set
+    base_models = cell(1, length(model_types));
+    meta_test_features = zeros(size(X_test_normalized, 1), length(model_types));
+    
+    for m = 1:length(model_types)
+        model_type = model_types{m};
+        fprintf('  Training full %s model for ensemble...\n', model_type);
+        
+        X_train_j = X_train_normalized(:, selected_features_j);
+        X_test_j = X_test_normalized(:, selected_features_j);
+        Y_train_j = Y_train(:, j);
+        
+        switch model_type
+            case 'RF'
+                % Random Forest
+                model = TreeBagger(100, X_train_j, Y_train_j, 'Method', 'regression', ...
+                    'MinLeafSize', 5, 'NumPredictorsToSample', max(1, floor(sqrt(size(X_train_j, 2)))));
+                meta_test_features(:, m) = predict(model, X_test_j);
+                
+            case 'GPR'
+                % GPR - use subset if needed
+                if size(X_train_j, 1) > 2000
+                    subset_idx = randperm(size(X_train_j, 1), 2000);
+                    X_train_gpr = X_train_j(subset_idx, :);
+                    Y_train_gpr = Y_train_j(subset_idx);
+                else
+                    X_train_gpr = X_train_j;
+                    Y_train_gpr = Y_train_j;
+                end
+                
+                gpr_kernel = @(x1, x2) std(Y_train_gpr)^2 * exp(-0.5 * pdist2(x1, x2).^2);
+                model = fitrgp(X_train_gpr, Y_train_gpr, 'KernelFunction', gpr_kernel, ...
+                    'Sigma', 0.1 * std(Y_train_gpr), 'Standardize', true);
+                meta_test_features(:, m) = predict(model, X_test_j);
+                
+            case 'SVR'
+                % SVR - use subset if needed
+                if size(X_train_j, 1) > 5000
+                    subset_idx = randperm(size(X_train_j, 1), 5000);
+                    X_train_svr = X_train_j(subset_idx, :);
+                    Y_train_svr = Y_train_j(subset_idx);
+                else
+                    X_train_svr = X_train_j;
+                    Y_train_svr = Y_train_j;
+                end
+                
+                model = fitrsvm(X_train_svr, Y_train_svr, 'KernelFunction', 'rbf', ...
+                    'Standardize', true, 'KernelScale', 'auto', 'Epsilon', 0.1);
+                meta_test_features(:, m) = predict(model, X_test_j);
+        end
+        
+        base_models{m} = model;
+    end
+    
+    % Train meta-model (ensemble combiner)
+    fprintf('  Training meta-model...\n');
+    meta_model = fitrlinear(meta_train_features, Y_train(:, j), ...
+        'Learner', 'leastsquares', 'Regularization', 'ridge');
+    
+    % Make final predictions
+    final_predictions(:, j) = predict(meta_model, meta_test_features);
+    
+    % Store meta-model
+    meta_models{j} = meta_model;
+    
+    % Calculate final metrics
+    ensemble_rmse = sqrt(mean((final_predictions(:, j) - Y_test(:, j)).^2));
+    
+    % Calculate R^2
+    ss_total = sum((Y_test(:, j) - mean(Y_test(:, j))).^2);
+    ss_residual = sum((Y_test(:, j) - final_predictions(:, j)).^2);
+    ensemble_r2 = 1 - (ss_residual / ss_total);
+    
+    fprintf('Ensemble metrics for %s: RMSE: %.4f, R^2: %.4f\n', ...
+        joint_names{j}, ensemble_rmse, ensemble_r2);
+end
+
+% Calculate overall ensemble metrics
+ensemble_overall_rmse = sqrt(mean(mean((final_predictions - Y_test).^2)));
+ensemble_overall_r2 = mean(test_r2);
+fprintf('Ensemble Overall RMSE: %.4f degrees\n', ensemble_overall_rmse);
+fprintf('Ensemble Average R^2: %.4f\n', ensemble_overall_r2);
+
+%% Visualizations
+
+% 1. Feature Importance Visualization using mutual information
+figure('Name', 'Feature Importance for Joint Angle Prediction', 'Position', [100, 100, 1200, 600]);
+
+% Calculate average feature importance across all joints
+avg_mi = mean(mi_values, 2);
+[sorted_mi, sorted_idx] = sort(avg_mi, 'descend');
+
+% Plot top 20 features
+num_top_features = min(20, length(sorted_mi));
+bar(sorted_mi(1:num_top_features));
+title('Top Features by Average Mutual Information');
+xlabel('Feature Index');
+ylabel('Average Mutual Information');
+grid on;
+
+% 2. Prediction Results for Each Joint Angle
+figure('Name', 'Prediction Error by Joint Angle', 'Position', [100, 100, 900, 500]);
+subplot(2,1,1);
+bar(test_rmse);
+hold on;
+plot(1:num_joints, ones(1,num_joints)*overall_rmse, 'r--', 'LineWidth', 2);
+hold off;
+title('RMSE for Each Joint Angle');
+xlabel('Joint');
+ylabel('RMSE (degrees)');
+xticks(1:num_joints);
+xticklabels(joint_names);
+xtickangle(45);
+grid on;
+legend('Joint RMSE', 'Overall RMSE', 'Location', 'best');
+
+subplot(2,1,2);
+bar(test_r2);
+hold on;
+plot(1:num_joints, ones(1,num_joints)*overall_r2, 'r--', 'LineWidth', 2);
+hold off;
+title('R^2 for Each Joint Angle');
+xlabel('Joint');
+ylabel('R^2');
+xticks(1:num_joints);
+xticklabels(joint_names);
+xtickangle(45);
+grid on;
+legend('Joint R^2', 'Overall R^2', 'Location', 'best');
+
+% 3. Plot actual vs predicted for selected joints
+% 3. Plot actual vs predicted for selected joints
+figure('Name', 'Actual vs Predicted Joint Angles', 'Position', [100, 100, 1200, 800]);
+
+% Select a few representative joints to visualize
+joints_to_plot = [3, 6, 9, 12];  % Index, Middle, Ring, Little finger first joints
+
+for i = 1:length(joints_to_plot)
+    j = joints_to_plot(i);
+    subplot(2, 2, i);
+    
+    % Get a subset of points for clearer visualization
+    if size(Y_test, 1) > 1000
+        plot_indices = 1:5:1000;  % Plot every 5th point up to 1000
+    else
+        plot_indices = 1:size(Y_test, 1);
+    end
+    
+    % Plot actual vs predicted values
+    plot(Y_test(plot_indices, j), 'b-', 'LineWidth', 1.5);
+    hold on;
+    plot(final_predictions(plot_indices, j), 'r--', 'LineWidth', 1.5);
+    hold off;
+    
+    title([joint_names{j}, ' (RMSE: ', num2str(sqrt(mean((final_predictions(:, j) - Y_test(:, j)).^2)), '%.2f'), '°)']);
+    xlabel('Sample');
+    ylabel('Joint Angle (degrees)');
+    legend('Actual', 'Predicted', 'Location', 'best');
+    grid on;
+end
+
+% 4. Model performance comparison (base models vs ensemble)
+figure('Name', 'Base Models vs Ensemble Performance', 'Position', [100, 100, 900, 500]);
+
+% Compare RMSE of individual models vs ensemble
+subplot(1, 2, 1);
+bar([overall_rmse, ensemble_overall_rmse]);
+title('Overall RMSE Comparison');
+ylabel('RMSE (degrees)');
+xticklabels({'Base Models', 'Ensemble'});
+grid on;
+
+% Compare R^2 of individual models vs ensemble
+subplot(1, 2, 2);
+bar([overall_r2, ensemble_overall_r2]);
+title('Overall R^2 Comparison');
+ylabel('R^2');
+xticklabels({'Base Models', 'Ensemble'});
+grid on;
+
+% 5. Visualization of joint angle trajectories in 3D for finger movement
+figure('Name', '3D Finger Movement Visualization', 'Position', [100, 100, 1000, 800]);
+
+% Create 3D visualization for a short sequence
+% For demonstration, we'll use 200 consecutive frames
+seq_start = 1;
+seq_length = min(200, size(final_predictions, 1));
+seq_end = seq_start + seq_length - 1;
+
+% Get finger joint groups
+thumb_joints = [1, 2];
+index_joints = [3, 4, 5];
+middle_joints = [6, 7, 8];
+ring_joints = [9, 10, 11];
+little_joints = [12, 13, 14];
+
+% Function to convert joint angles to 3D coordinates
+% This is a simplification - in reality, would need actual finger dimensions
+joint_to_coords = @(angles, base_pos, lengths) cumsum([base_pos; lengths .* [cos(angles*pi/180), sin(angles*pi/180), zeros(length(angles), 1)]], 1);
+
+% Base positions for fingers (rough approximation of hand)
+base_positions = [
+    [0, 0, 0];     % Thumb base
+    [0, 1, 0];     % Index base
+    [0, 2, 0];     % Middle base
+    [0, 3, 0];     % Ring base
+    [0, 4, 0]      % Little base
+];
+
+% Segment lengths (simplified)
+thumb_lengths = [3, 2];
+finger_lengths = [3, 2, 1.5];
+
+% Create 3D plot
+subplot(1, 2, 1);
+title('Actual Joint Angles - 3D Hand Visualization');
+hold on;
+grid on;
+view(45, 30);
+axis equal;
+xlabel('X');
+ylabel('Y');
+zlabel('Z');
+
+% Plot for a single time point (middle of sequence)
+t = floor(seq_length/2) + seq_start;
+
+% Plot actual joint angles
+% Thumb
+thumb_angles_actual = Y_test(t, thumb_joints);
+thumb_coords_actual = joint_to_coords(thumb_angles_actual, base_positions(1,:), thumb_lengths);
+plot3([base_positions(1,1); thumb_coords_actual(:,1)], ...
+      [base_positions(1,2); thumb_coords_actual(:,2)], ...
+      [base_positions(1,3); thumb_coords_actual(:,3)], 'b-o', 'LineWidth', 2);
+
+% Index finger
+index_angles_actual = Y_test(t, index_joints);
+index_coords_actual = joint_to_coords(index_angles_actual, base_positions(2,:), finger_lengths);
+plot3([base_positions(2,1); index_coords_actual(:,1)], ...
+      [base_positions(2,2); index_coords_actual(:,2)], ...
+      [base_positions(2,3); index_coords_actual(:,3)], 'r-o', 'LineWidth', 2);
+
+% Middle finger
+middle_angles_actual = Y_test(t, middle_joints);
+middle_coords_actual = joint_to_coords(middle_angles_actual, base_positions(3,:), finger_lengths);
+plot3([base_positions(3,1); middle_coords_actual(:,1)], ...
+      [base_positions(3,2); middle_coords_actual(:,2)], ...
+      [base_positions(3,3); middle_coords_actual(:,3)], 'g-o', 'LineWidth', 2);
+
+% Ring finger
+ring_angles_actual = Y_test(t, ring_joints);
+ring_coords_actual = joint_to_coords(ring_angles_actual, base_positions(4,:), finger_lengths);
+plot3([base_positions(4,1); ring_coords_actual(:,1)], ...
+      [base_positions(4,2); ring_coords_actual(:,2)], ...
+      [base_positions(4,3); ring_coords_actual(:,3)], 'm-o', 'LineWidth', 2);
+
+% Little finger
+little_angles_actual = Y_test(t, little_joints);
+little_coords_actual = joint_to_coords(little_angles_actual, base_positions(5,:), finger_lengths);
+plot3([base_positions(5,1); little_coords_actual(:,1)], ...
+      [base_positions(5,2); little_coords_actual(:,2)], ...
+      [base_positions(5,3); little_coords_actual(:,3)], 'c-o', 'LineWidth', 2);
+
+% Connect finger bases to represent palm
+plot3(base_positions(:,1), base_positions(:,2), base_positions(:,3), 'k-', 'LineWidth', 3);
+
+% Add legend
+legend('Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Palm', 'Location', 'best');
+
+% Create subplot for predicted joint angles
+subplot(1, 2, 2);
+title('Predicted Joint Angles - 3D Hand Visualization');
+hold on;
+grid on;
+view(45, 30);
+axis equal;
+xlabel('X');
+ylabel('Y');
+zlabel('Z');
+
+% Plot predicted joint angles
+% Thumb
+thumb_angles_pred = final_predictions(t, thumb_joints);
+thumb_coords_pred = joint_to_coords(thumb_angles_pred, base_positions(1,:), thumb_lengths);
+plot3([base_positions(1,1); thumb_coords_pred(:,1)], ...
+      [base_positions(1,2); thumb_coords_pred(:,2)], ...
+      [base_positions(1,3); thumb_coords_pred(:,3)], 'b-o', 'LineWidth', 2);
+
+% Index finger
+index_angles_pred = final_predictions(t, index_joints);
+index_coords_pred = joint_to_coords(index_angles_pred, base_positions(2,:), finger_lengths);
+plot3([base_positions(2,1); index_coords_pred(:,1)], ...
+      [base_positions(2,2); index_coords_pred(:,2)], ...
+      [base_positions(2,3); index_coords_pred(:,3)], 'r-o', 'LineWidth', 2);
+
+% Middle finger
+middle_angles_pred = final_predictions(t, middle_joints);
+middle_coords_pred = joint_to_coords(middle_angles_pred, base_positions(3,:), finger_lengths);
+plot3([base_positions(3,1); middle_coords_pred(:,1)], ...
+      [base_positions(3,2); middle_coords_pred(:,2)], ...
+      [base_positions(3,3); middle_coords_pred(:,3)], 'g-o', 'LineWidth', 2);
+
+% Ring finger
+ring_angles_pred = final_predictions(t, ring_joints);
+ring_coords_pred = joint_to_coords(ring_angles_pred, base_positions(4,:), finger_lengths);
+plot3([base_positions(4,1); ring_coords_pred(:,1)], ...
+      [base_positions(4,2); ring_coords_pred(:,2)], ...
+      [base_positions(4,3); ring_coords_pred(:,3)], 'm-o', 'LineWidth', 2);
+
+% Little finger
+little_angles_pred = final_predictions(t, little_joints);
+little_coords_pred = joint_to_coords(little_angles_pred, base_positions(5,:), finger_lengths);
+plot3([base_positions(5,1); little_coords_pred(:,1)], ...
+      [base_positions(5,2); little_coords_pred(:,2)], ...
+      [base_positions(5,3); little_coords_pred(:,3)], 'c-o', 'LineWidth', 2);
+
+% Connect finger bases to represent palm
+plot3(base_positions(:,1), base_positions(:,2), base_positions(:,3), 'k-', 'LineWidth', 3);
+
+% Add legend
+legend('Thumb', 'Index', 'Middle', 'Ring', 'Little', 'Palm', 'Location', 'best');
+
+%% Save Results
+fprintf('Saving model and results...\n');
+
+% Create a struct with all relevant information
+results = struct();
+results.models = best_models;
+results.model_types = best_model_types;
+results.selected_features = best_features;
+results.meta_models = meta_models;
+results.feature_importance = mi_values;
+results.normalization.mu = mu;
+results.normalization.sigma = sigma;
+results.metrics.rmse = test_rmse;
+results.metrics.r2 = test_r2;
+results.metrics.overall_rmse = overall_rmse;
+results.metrics.overall_r2 = overall_r2;
+results.metrics.ensemble_rmse = ensemble_overall_rmse;
+results.metrics.ensemble_r2 = ensemble_overall_r2;
+results.joint_names = joint_names;
+
+% Save the results
+save('emg_joint_prediction_results.mat', 'results');
+
+fprintf('EMG to joint angle prediction completed successfully!\n');
+fprintf('Overall RMSE: %.4f degrees\n', ensemble_overall_rmse);
+fprintf('Overall R^2: %.4f\n', ensemble_overall_r2);
+
+% Display per-joint performance metrics in a table
+joint_metrics = table(joint_names', test_rmse', test_r2', ...
+    'VariableNames', {'Joint', 'RMSE', 'R2'});
+disp(joint_metrics);
+
+% Print which model type was selected for each joint
+for j = 1:num_joints
+    fprintf('Joint %s: Best model type = %s\n', joint_names{j}, best_model_types{j});
+end

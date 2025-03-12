@@ -1,0 +1,53 @@
+<html>  
+<head>
+    <style>     
+        html{     
+        background-color: white;     
+        padding: 5px;     
+        width: 95%;     
+        }     
+        pre {     
+        overflow-x: auto;     
+        white-space: pre-wrap;     
+        white-space: -moz-pre-wrap;     
+        white-space: -pre-wrap;     
+        white-space: -o-pre-wrap;     
+        word-wrap: break-word;     
+        }     
+    </style>     
+    
+    <script type="text/javascript">     
+            
+            function setup(htmlComponent) {     
+            
+				htmlComponent.addEventListener("DataChanged", function(event) {     
+				scrollID =  htmlComponent.Data;     
+					if (scrollID != ''){
+						if(scrollID==="bottom"){         
+							scrollToBottom();     
+						} else if(scrollID==="DOWNLOAD_MCRINSTALLER" || scrollID==="BUILD_MISSING" || scrollID==="SAMPLE_GEN" || scrollID==="USER_REQUESTED_PACKAGE"){     
+							document.getElementById(scrollID).scrollIntoView(true);     
+						} else {     
+							//document.body.innerHTML = document.body.innerHTML + scrollID;     
+							document.body.appendChild(scrollID);                 
+							scrollToBottom();     
+						}    
+						htmlComponent.Data = '';
+					}		
+				});          
+            }     
+            function scrollToBottom(){     
+            var scrollingElement = (document.scrollingElement || document.body);     
+            scrollingElement.scrollTop = scrollingElement.scrollHeight;     
+            }     
+            
+    </script> 
+</head>
+ <body><meta charset="UTF-8">        
+ <pre><font color=blue>mcc -W 'webapp:app1_1,CONFIG:C:\Users\tamin\AppData\Local\Temp\tpa2b93e7a_afe9_4b41_a8b9_4075c9bc4e27.xml' -d 'G:\My Drive\BMEIU-Project1_Project2_Pre_Thesis\THESIS\Database\Dataset 1 _ IEEE\app1_1' -v -Z autodetect -C 'G:\My Drive\BMEIU-Project1_Project2_Pre_Thesis\THESIS\Database\Dataset 1 _ IEEE\app1.mlapp'</font>
+Compiler version: 8.4 (R2022a)
+Analyzing file dependencies. 
+Parsing file "G:\My Drive\BMEIU-Project1_Project2_Pre_Thesis\THESIS\Database\Dataset 1 _ IEEE\app1.mlapp" 
+	(referenced from command line). 
+
+</pre></body></html>
