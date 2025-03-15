@@ -1,5 +1,5 @@
 % Main script to run everything
-load('s1.mat'); % Load your .mat file
+load('s4.mat'); % Load your .mat file
 joint_angles = calculate_joint_angles_ver2(finger_kinematics);
 muscle_names = {'APL', 'FCR', 'FDS', 'FDP', 'ED', 'EI', 'ECU', 'ECR'};
 % Call the function with three outputs
