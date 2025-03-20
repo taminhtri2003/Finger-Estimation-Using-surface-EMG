@@ -1,6 +1,6 @@
 % Enhanced EMG to Joint Angle Prediction with Feature Extraction and Visualization
 %% Load Data
-load('s2_full.mat');
+load('s4_full.mat');
 %% Data Preparation
 emg_features = cell(5, 5);
 all_joint_angles = cell(5, 5);

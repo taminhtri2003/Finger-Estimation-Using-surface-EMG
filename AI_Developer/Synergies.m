@@ -309,7 +309,7 @@ function visualizeHandMovement(actual_angles, predicted_angles, joint_names)
     end
 end
 
-function hand_data = visualizeHand(angles, joint_names, thumb_segments, index_segments, middle_segments, ring_segments, little_segments)
+function hand_data = visualizeHand(angles, ~, thumb_segments, index_segments, middle_segments, ring_segments, little_segments)
     % Visualize a 3D hand model based on joint angles
     
     % Initialize wrist position (origin)
@@ -334,19 +334,19 @@ function hand_data = visualizeHand(angles, joint_names, thumb_segments, index_se
     
     % Calculate finger joint positions
     % Thumb
-    [thumb_positions, thumb_vectors] = calculateFingerPositions(thumb_base, thumb_angles, thumb_segments, [-0.5, 0.5, 0.7]);
+    [thumb_positions, ~] = calculateFingerPositions(thumb_base, thumb_angles, thumb_segments, [-0.5, 0.5, 0.7]);
     
     % Index
-    [index_positions, index_vectors] = calculateFingerPositions(index_base, index_angles, index_segments, [0, 0, 1]);
+    [index_positions, ~] = calculateFingerPositions(index_base, index_angles, index_segments, [0, 0, 1]);
     
     % Middle
-    [middle_positions, middle_vectors] = calculateFingerPositions(middle_base, middle_angles, middle_segments, [0, 0, 1]);
+    [middle_positions, ~] = calculateFingerPositions(middle_base, middle_angles, middle_segments, [0, 0, 1]);
     
     % Ring
-    [ring_positions, ring_vectors] = calculateFingerPositions(ring_base, ring_angles, ring_segments, [0, 0, 1]);
+    [ring_positions, ~] = calculateFingerPositions(ring_base, ring_angles, ring_segments, [0, 0, 1]);
     
     % Little
-    [little_positions, little_vectors] = calculateFingerPositions(little_base, little_angles, little_segments, [0, 0, 1]);
+    [little_positions, ~] = calculateFingerPositions(little_base, little_angles, little_segments, [0, 0, 1]);
     
     % Combine all positions for plotting
     all_positions = {

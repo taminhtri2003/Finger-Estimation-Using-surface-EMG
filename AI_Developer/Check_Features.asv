@@ -1,0 +1,67 @@
+% Load the .mat file
+load('s1_full.mat'); % Replace 'your_data.mat' with the actual file name
+
+% Number of trials and tasks
+num_trials = size(dsfilt_emg, 1);
+num_tasks = size(dsfilt_emg, 2);
+num_muscles = 8; % Number of muscles (EMG sensors)
+num_joints = 14; % Number of joint angles
+
+% Initialize variables
+muscle_importance = zeros(num_muscles, num_joints);
+total_variance = zeros(num_trials, num_tasks);
+lambda = 1; % Regularization parameter - can be tuned
+
+% Loop through trials and tasks
+for trial = 1:num_trials
+    for task = 1:num_tasks
+        % Extract EMG and joint angle data
+        emg_data = dsfilt_emg{trial, task};
+        joint_angles_data = joint_angles{trial, task};
+
+        % Check for empty data
+         if ~isempty(emg_data) && ~isempty(joint_angles_data)
+            % Calculate the total variance of the joint angles for this trial and task
+            total_variance(trial, task) = sum(var(joint_angles_data));
+            % Perform regression for each joint angle
+            for joint = 1:num_joints
+                y = joint_angles_data(:, joint);
+                X = emg_data;
+
+                % Add a constant term
+                X = [ones(size(X, 1), 1) X];
+
+                % Ridge Regression using normal equations
+                identity_matrix = eye(size(X, 2));
+                % Adjust the identity matrix to exclude the bias term
+                identity_matrix(1, 1) = 0;
+                b = (X' * X + lambda * identity_matrix) \ (X' * y);
+
+                % Calculate R-squared (for assessing importance)
+                y_pred = X * b;
+                SS_total = sum((y - mean(y)).^2);
+                SS_residual = sum((y - y_pred).^2);
+                R_squared = 1 - (SS_residual / SS_total);
+
+                muscle_importance(:, joint) = muscle_importance(:, joint) + (R_squared / (num_trials * num_tasks));
+            end
+         else
+            disp(['Warning: Empty data for trial ' num2str(trial) ', task ' num2str(task)]);
+         end
+    end
+end
+
+% Display results
+disp('Muscle Importance (averaged R-squared values from Ridge Regression):');
+disp(muscle_importance);
+
+disp('Total Variance of Joint Angles (for each trial and task):');
+disp(total_variance);
+
+% Optional: Plot the muscle importance
+figure;
+bar(muscle_importance);
+title('Muscle Importance for Each Joint (Ridge Regression)');
+xlabel('Joint Angle');
+ylabel('Average R-squared Value (Importance)');
+legend({'APL', 'FCR', 'FDS', 'FDP', 'ED', 'EI', 'ECU', 'ECR'});

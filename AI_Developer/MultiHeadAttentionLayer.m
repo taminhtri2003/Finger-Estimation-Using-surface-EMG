@@ -48,7 +48,7 @@ classdef MultiHeadAttentionLayer < nnet.layer.Layer
             Z = dropout(Z, layer.DropoutRate);
         end
 
-        function outSize = outputSize(layer, inputSize)
+        function outSize = outputSize(~, inputSize)
             outSize = inputSize;
         end
     end
