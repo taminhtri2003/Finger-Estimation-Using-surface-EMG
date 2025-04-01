@@ -1,0 +1,230 @@
+% MATLAB Code to Build and Train EMG-to-Joint Angle Prediction Model
+% Based on provided data description and Figure (b) architecture.
+
+%% 1. Load and Preprocess Data
+
+% --- Parameters ---
+matFileName = 'your_data_file.mat'; % <-- *** REPLACE WITH YOUR ACTUAL .MAT FILE NAME ***
+numTrials = 5;
+numTasks = 7;
+numEMGChannels = 8;
+numTotalAngles = 14;
+sequenceLength = 4000; % From data description <4000x...>
+
+% --- Angle Indices for Each Finger Decoder ---
+thumbAngleIdx = 1:2;   % As per description: Thumb 1, Thumb 2
+indexAngleIdx = 3:5;   % As per description: Index 1, Index 2, Index 3
+middleAngleIdx = 6:8;  % As per description: Middle 1, Middle 2, Middle 3
+ringAngleIdx = 9:11;   % As per description: Ring 1, Ring 2, Ring 3
+pinkyAngleIdx = 12:14; % As per description: Little 1, Little 2, Little 3
+
+% --- Load Data ---
+try
+    data = load(matFileName);
+    disp('Data loaded successfully.');
+    % Verify expected variables exist
+    if ~isfield(data, 'dsfilt_emg') || ~isfield(data, 'joint_angles')
+        error('Loaded .mat file does not contain required variables: dsfilt_emg, joint_angles');
+    end
+catch ME
+    error('Failed to load MAT file: %s\n%s', matFileName, ME.message);
+end
+
+% --- Prepare Data for Training ---
+% We will concatenate all sequences from all trials and tasks.
+% The Deep Learning Toolbox often expects cell arrays where each cell contains
+% one sequence (Features x Time).
+
+numSequences = numTrials * numTasks;
+XTrain = cell(numSequences, 1); % Input EMG sequences
+YTrain_Thumb = cell(numSequences, 1); % Target Thumb angles
+YTrain_Index = cell(numSequences, 1); % Target Index angles
+YTrain_Middle = cell(numSequences, 1); % Target Middle angles
+YTrain_Ring = cell(numSequences, 1);   % Target Ring angles
+YTrain_Pinky = cell(numSequences, 1);  % Target Pinky angles
+
+seqCount = 0;
+for trial = 1:numTrials
+    for task = 1:numTasks
+        seqCount = seqCount + 1;
+
+        % Extract EMG and Angle data for this sequence
+        emgData = data.dsfilt_emg{trial, task}; % Should be 4000x8
+        angleData = data.joint_angles{trial, task}; % Should be 4000x14
+
+        % --- Data Integrity Check ---
+        if size(emgData, 1) ~= sequenceLength || size(emgData, 2) ~= numEMGChannels
+             warning('Sequence %d (Trial %d, Task %d): EMG data size mismatch. Expected %dx%d, got %dx%d. Skipping.', ...
+                 seqCount, trial, task, sequenceLength, numEMGChannels, size(emgData,1), size(emgData,2));
+             continue; % Or handle differently (e.g., padding/truncating)
+        end
+         if size(angleData, 1) ~= sequenceLength || size(angleData, 2) ~= numTotalAngles
+             warning('Sequence %d (Trial %d, Task %d): Angle data size mismatch. Expected %dx%d, got %dx%d. Skipping.', ...
+                 seqCount, trial, task, sequenceLength, numTotalAngles, size(angleData,1), size(angleData,2));
+             continue; % Or handle differently
+        end
+
+        % --- Transpose for Deep Learning Toolbox (Features x Time) ---
+        XTrain{seqCount} = emgData'; % Now 8x4000
+
+        % --- Split angles and Transpose ---
+        YTrain_Thumb{seqCount} = angleData(:, thumbAngleIdx)';   % 2x4000
+        YTrain_Index{seqCount} = angleData(:, indexAngleIdx)';   % 3x4000
+        YTrain_Middle{seqCount} = angleData(:, middleAngleIdx)'; % 3x4000
+        YTrain_Ring{seqCount} = angleData(:, ringAngleIdx)';     % 3x4000
+        YTrain_Pinky{seqCount} = angleData(:, pinkyAngleIdx)';   % 3x4000
+
+        % --- Normalization (Highly Recommended) ---
+        % Normalize EMG (e.g., z-score per channel across all data, or per sequence)
+        % Normalize Angles (e.g., scale to [0, 1] or [-1, 1] based on expected range)
+        % Placeholder: You should implement proper normalization before training
+        % Example (per sequence z-score for EMG):
+        % XTrain{seqCount} = (XTrain{seqCount} - mean(XTrain{seqCount}, 2)) ./ std(XTrain{seqCount}, 0, 2);
+        % Example (min-max scaling for angles assuming known min/max):
+        % minAngle = -pi; maxAngle = pi; % Example range
+        % YTrain_Thumb{seqCount} = (YTrain_Thumb{seqCount} - minAngle) / (maxAngle - minAngle);
+        % ... repeat for other fingers ...
+        % Remember to store normalization parameters (mean/std, min/max) to apply
+        % to test data and to reverse normalization after prediction.
+    end
+end
+
+% Remove any empty cells if sequences were skipped
+emptyCells = cellfun(@isempty, XTrain);
+XTrain(emptyCells) = [];
+YTrain_Thumb(emptyCells) = [];
+YTrain_Index(emptyCells) = [];
+YTrain_Middle(emptyCells) = [];
+YTrain_Ring(emptyCells) = [];
+YTrain_Pinky(emptyCells) = [];
+
+disp(['Prepared ', num2str(length(XTrain)), ' sequences for training.']);
+
+% --- Combine Targets for Multi-Output Training ---
+% Use a table for clarity, naming columns to match output layers
+YTrain = table(YTrain_Thumb, YTrain_Index, YTrain_Middle, YTrain_Ring, YTrain_Pinky, ...
+    'VariableNames', {'output_thumb', 'output_index', 'output_middle', 'output_ring', 'output_pinky'});
+
+
+%% 2. Define Network Architecture (Based on Figure b)
+
+numHiddenUnitsEncoder = 128; % Example: Number of hidden units in the common GRU encoder
+
+layers = [
+    sequenceInputLayer(numEMGChannels, 'Name', 'input', 'Normalization', 'none') % Set normalization if needed
+    gruLayer(numHiddenUnitsEncoder, 'OutputMode', 'sequence', 'Name', 'encoder_gru')
+    % Add dropout? relu? batchnorm? -> Optional layers for regularization/performance
+    % dropoutLayer(0.2, 'Name', 'encoder_dropout')
+];
+
+lgraph = layerGraph(layers);
+
+% --- Add Decoder Branches (Fully Connected layers mapping encoder output sequence) ---
+
+% Thumb Decoder Branch
+thumbLayers = [
+    fullyConnectedLayer(numel(thumbAngleIdx), 'Name', 'fc_thumb')
+    regressionLayer('Name', 'output_thumb') % Output layer for Thumb
+];
+lgraph = addLayers(lgraph, thumbLayers);
+lgraph = connectLayers(lgraph, 'encoder_gru', 'fc_thumb'); % Connect encoder output to Thumb FC layer
+
+% Index Decoder Branch
+indexLayers = [
+    fullyConnectedLayer(numel(indexAngleIdx), 'Name', 'fc_index')
+    regressionLayer('Name', 'output_index') % Output layer for Index
+];
+lgraph = addLayers(lgraph, indexLayers);
+lgraph = connectLayers(lgraph, 'encoder_gru', 'fc_index'); % Connect encoder output to Index FC layer
+
+% Middle Decoder Branch
+middleLayers = [
+    fullyConnectedLayer(numel(middleAngleIdx), 'Name', 'fc_middle')
+    regressionLayer('Name', 'output_middle') % Output layer for Middle
+];
+lgraph = addLayers(lgraph, middleLayers);
+lgraph = connectLayers(lgraph, 'encoder_gru', 'fc_middle'); % Connect encoder output to Middle FC layer
+
+% Ring Decoder Branch
+ringLayers = [
+    fullyConnectedLayer(numel(ringAngleIdx), 'Name', 'fc_ring')
+    regressionLayer('Name', 'output_ring') % Output layer for Ring
+];
+lgraph = addLayers(lgraph, ringLayers);
+lgraph = connectLayers(lgraph, 'encoder_gru', 'fc_ring'); % Connect encoder output to Ring FC layer
+
+% Pinky Decoder Branch
+pinkyLayers = [
+    fullyConnectedLayer(numel(pinkyAngleIdx), 'Name', 'fc_pinky')
+    regressionLayer('Name', 'output_pinky') % Output layer for Pinky
+];
+lgraph = addLayers(lgraph, pinkyLayers);
+lgraph = connectLayers(lgraph, 'encoder_gru', 'fc_pinky'); % Connect encoder output to Pinky FC layer
+
+disp('Network architecture defined:');
+analyzeNetwork(lgraph); % Display the network structure
+
+%% 3. Specify Training Options
+
+% Example options, tune these based on performance
+options = trainingOptions('adam', ...
+    'MaxEpochs', 50, ...                 % Number of training epochs
+    'GradientThreshold', 1, ...          % Helps prevent exploding gradients
+    'InitialLearnRate', 0.005, ...       % Learning rate
+    'LearnRateSchedule', 'piecewise', ... % Change learning rate during training
+    'LearnRateDropPeriod', 20, ...       % Drop learning rate every 20 epochs
+    'LearnRateDropFactor', 0.2, ...      % Factor to drop learning rate by
+    'Verbose', 1, ...                    % Show training progress
+    'Plots', 'training-progress', ...    % Show plot during training
+    'Shuffle', 'every-epoch', ...        % Shuffle data each epoch
+    'MiniBatchSize', 16);                % Adjust based on memory/data size
+    % Consider adding 'ValidationData' and 'ValidationFrequency' if you have a validation set
+
+%% 4. Train the Network
+
+disp('Starting network training...');
+% Ensure XTrain and YTrain are correctly formatted cell/table arrays
+[net, info] = trainNetwork(XTrain, YTrain, lgraph, options);
+
+disp('Training finished.');
+
+%% 5. Predict and Evaluate (Example)
+
+% % --- Make predictions on the first training sequence ---
+% if ~isempty(XTrain)
+%     YPredCell = predict(net, XTrain{1}); % Predict returns a cell array matching output layers
+%
+%     % Combine predicted sequences (optional)
+%     % Remember predicted outputs might need de-normalization
+%     predictedAngles_thumb = YPredCell{1}; % 2x4000
+%     predictedAngles_index = YPredCell{2}; % 3x4000
+%     predictedAngles_middle = YPredCell{3}; % 3x4000
+%     predictedAngles_ring = YPredCell{4}; % 3x4000
+%     predictedAngles_pinky = YPredCell{5}; % 3x4000
+%
+%     % Concatenate back into a single 14x4000 matrix if needed
+%     allPredictedAngles = [predictedAngles_thumb; predictedAngles_index; predictedAngles_middle; predictedAngles_ring; predictedAngles_pinky];
+%
+%     % --- Compare with actual targets ---
+%     actualAngles_thumb = YTrain_Thumb{1};
+%     actualAngles_index = YTrain_Index{1};
+%     % ... etc.
+%     allActualAngles = [actualAngles_thumb; actualAngles_index; YTrain_Middle{1}; YTrain_Ring{1}; YTrain_Pinky{1}];
+%
+%     % --- Plot comparison for one angle (e.g., first index finger angle) ---
+%     figure;
+%     plot(allActualAngles(3,:), 'b-', 'LineWidth', 1.5); % Actual Index 1 angle
+%     hold on;
+%     plot(allPredictedAngles(3,:), 'r--', 'LineWidth', 1.5); % Predicted Index 1 angle
+%     hold off;
+%     legend('Actual Angle', 'Predicted Angle');
+%     title('Comparison for Index Finger Angle 1');
+%     xlabel('Time Step');
+%     ylabel('Angle (Normalized/Radians)');
+%
+%     % --- Calculate Metrics (e.g., RMSE) ---
+%     rmse = sqrt(mean((allActualAngles - allPredictedAngles).^2, 'all'));
+%     disp(['Root Mean Squared Error (RMSE) on first training sequence: ', num2str(rmse)]);
+% else
+%     disp('No data available to make predictions.');
+% end
