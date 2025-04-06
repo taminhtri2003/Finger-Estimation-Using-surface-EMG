@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive sEMG Prediction & XAI Principles</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        MathJax = {
+          tex: {
+            inlineMath: [['$', '$'], ['\\(', '\\)']],
+            displayMath: [['$$', '$$'], ['\\[', '\\]']],
+            processEscapes: true
+          },
+          svg: {
+            fontCache: 'global'
+          }
+        };
+    </script>
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+    <script>
+        // Tailwind Config (Optional)
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    keyframes: {
+                        pulseSlow: {
+                          '0%, 100%': { opacity: 1 },
+                          '50%': { opacity: 0.7 },
+                        }
+                      },
+                    animation: {
+                        pulseSlow: 'pulseSlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; /* slate-100 */ }
+        .content-section { background-color: white; padding: 1.5rem; border-radius: 0.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 2rem; }
+        .viz-placeholder { border: 2px dashed #94a3b8; background-color: #f8fafc; min-height: 150px; display: flex; align-items: center; justify-content: center; text-align: center; color: #64748b; font-style: italic; border-radius: 0.375rem; padding: 1rem; }
+        .math-formula { background-color: #f1f5f9; padding: 1rem; border-radius: 0.25rem; margin: 1rem 0; overflow-x: auto; }
+        /* Simple animation for data flow */
+        .data-flow-arrow { animation: pulseSlow 1.5s infinite; }
+        /* Style sliders */
+         input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; background: #d1d5db; border-radius: 5px; outline: none; opacity: 0.7; transition: opacity .2s; cursor: pointer; }
+         input[type=range]:hover { opacity: 1; }
+         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; background: #3b82f6; border-radius: 50%; cursor: pointer; }
+         input[type=range]::-moz-range-thumb { width: 20px; height: 20px; background: #3b82f6; border-radius: 50%; cursor: pointer; border: none; }
+    </style>
+</head>
+<body class="text-gray-900">
+
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+
+        <header class="mb-10 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900 mb-2">Interactive Exploration: sEMG Angle Prediction & XAI</h1>
+            <p class="text-lg text-slate-600">Visualizing the Principles</p>
+        </header>
+
+        <main class="space-y-8">
+
+            <section class="content-section">
+                <h2 class="text-2xl font-semibold text-slate-800 mb-3">Introduction</h2>
+                <p class="text-slate-700 leading-relaxed">This page interactively explores the concepts behind predicting hand joint angles from forearm muscle signals (sEMG) and explaining those predictions using counterfactuals. We'll visualize the data flow, model concepts, and the principles of the explanation technique.</p>
+            </section>
+
+            <section class="content-section">
+                <h2 class="text-2xl font-semibold text-slate-800 mb-3">Real-Time Angle Prediction</h2>
+                <p class="text-slate-700 leading-relaxed mb-4">In a real-time scenario, sEMG data streams in continuously. A sliding window captures the most recent data, which is fed into the trained Predictor Model to estimate current joint angles.</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                    <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium mb-2">sEMG Input Stream</h3>
+                        <div id="realtime-emg-viz" class="viz-placeholder h-40">
+                            [JS/D3 Animation: Scrolling multi-channel EMG signals]
+                        </div>
+                        <p class="text-xs text-center text-slate-500 mt-1">Simulated 8-channel sEMG</p>
+                    </div>
+                    <div class="text-center text-3xl font-bold text-blue-600 data-flow-arrow md:col-span-1">
+                        &rarr;
+                    </div>
+                     <div class="md:col-span-1">
+                        <h3 class="text-lg font-medium mb-2">Sliding Window & Predictor</h3>
+                        <div id="realtime-window-viz" class="viz-placeholder h-20 mb-2">
+                             [JS Animation: Window moving over EMG snippet]
+                        </div>
+                         <div class="text-center text-xl font-bold text-blue-600 data-flow-arrow mb-2">&darr;</div>
+                         <div class="text-center p-2 border rounded bg-blue-50 border-blue-200">
+                             <span class="font-mono text-blue-800">Predictor Model (MLP/LSTM)</span>
+                         </div>
+                    </div>
+                </div>
+                 <div class="text-center text-3xl font-bold text-blue-600 data-flow-arrow my-4">&darr;</div>
+                 <div>
+                    <h3 class="text-lg font-medium mb-2 text-center">Predicted Angles</h3>
+                    <div id="realtime-angle-viz" class="viz-placeholder h-40">
+                        [JS/D3 Animation: Bars or dials showing 14 predicted angles updating]
+                    </div>
+                </div>
+                <div class="mt-4 text-center">
+                     <button id="start-sim-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition duration-150 ease-in-out">
+                         Start/Stop Real-Time Simulation
+                     </button>
+                 </div>
+                 <p class="text-sm text-slate-600 mt-4">This simulation uses only the fast Predictor model. The complex analysis below is performed offline.</p>
+            </section>
+
+            <section class="content-section bg-gradient-to-r from-slate-50 to-gray-50">
+                <h2 class="text-2xl font-semibold text-slate-800 mb-3">Offline Analysis: Understanding the Model</h2>
+                <p class="text-slate-700 leading-relaxed">While real-time prediction is fast, understanding *why* the model makes certain predictions or how to achieve different outcomes requires deeper, offline analysis using techniques like GANs and counterfactual explanations.</p>
+            </section>
+
+            <section class="content-section">
+                 <h2 class="text-2xl font-semibold text-slate-800 mb-3">Concept: Generative Adversarial Network (GAN)</h2>
+                 <p class="text-slate-700 leading-relaxed mb-4">A GAN is trained offline to learn what realistic EMG looks like. It has two parts:</p>
+                 <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-center text-center">
+                     <div class="md:col-span-2 p-3 border rounded bg-green-50 border-green-200">
+                         <h4 class="font-medium text-green-800">Generator</h4>
+                         <div class="my-2 text-xl font-bold text-green-600 data-flow-arrow">&darr;</div>
+                         <div class="viz-placeholder h-24 my-2">[JS Animation: Noise vector transforming]</div>
+                         <div class="my-2 text-xl font-bold text-green-600 data-flow-arrow">&darr;</div>
+                         <p class="text-sm text-green-700">Generates Fake EMG</p>
+                     </div>
+                     <div class="text-xl font-bold text-slate-500">&rarr;</div>
+                     <div class="md:col-span-2 p-3 border rounded bg-red-50 border-red-200">
+                         <h4 class="font-medium text-red-800">Discriminator</h4>
+                          <div class="viz-placeholder h-24 my-2">
+                            [JS Animation: Real/Fake EMG input]
+                          </div>
+                          <div class="my-2 text-xl font-bold text-red-600 data-flow-arrow">&darr;</div>
+                         <p class="text-sm text-red-700">Judges: Real or Fake?</p>
+                     </div>
+                 </div>
+                 <p class="text-slate-700 leading-relaxed mt-4">The trained Discriminator provides a 'realism score' used in the counterfactual analysis.</p>
+            </section>
+
+            <section class="content-section">
+                <h2 class="text-2xl font-semibold text-slate-800 mb-3">Concept: Counterfactual Explanation (Offline)</h2>
+                <p class="text-slate-700 leading-relaxed mb-2">Goal: Find the smallest, most realistic change to EMG to get a desired angle prediction.</p>
+                <p class="text-slate-700 leading-relaxed mb-4">Method: Search in the GAN Generator's <span class="font-medium">Latent Space</span> (a simplified representation) instead of directly changing EMG.</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-lg font-medium mb-2">1. Define Target</h3>
+                        <label for="target-angle-slider" class="block text-sm font-medium text-slate-700">Target Change for Angle 2 (degrees): <span id="target-angle-value" class="font-bold">10</span></label>
+                        <input type="range" id="target-angle-slider" name="target-angle" min="-30" max="30" value="10" class="mt-1">
+                        <div id="cf-initial-state" class="mt-4 viz-placeholder h-32">
+                             [JS Viz: Show initial predicted angles (e.g., bars)]
+                        </div>
+                         <p class="text-xs text-center text-slate-500 mt-1">Initial Prediction</p>
+                    </div>
+                     <div>
+                        <h3 class="text-lg font-medium mb-2">2. Latent Space Search</h3>
+                        <p class="text-sm text-slate-600 mb-2">Optimize latent vector 'z' balancing objectives:</p>
+                         <div id="cf-search-viz" class="viz-placeholder h-48">
+                            [JS Animation: Point moving in conceptual 2D space towards a target, influenced by constraints]
+                         </div>
+                          <p class="text-xs text-center text-slate-500 mt-1">Conceptual Latent Search</p>
+                    </div>
+                </div>
+
+                 <div class="mt-6">
+                     <h3 class="text-lg font-medium mb-3">3. Balancing Objectives (Conceptual Control)</h3>
+                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-sm">
+                         <div>
+                             <label for="lambda-model" class="block font-medium text-slate-700">Model Match ($\lambda_{model}$)</label>
+                             <input type="range" id="lambda-model" name="lambda-model" min="0" max="2" step="0.1" value="1.0"><span id="lambda-model-val" class="ml-2 font-mono text-xs">1.0</span>
+                         </div>
+                          <div>
+                             <label for="lambda-prox" class="block font-medium text-slate-700">EMG Proximity ($\lambda_{prox}$)</label>
+                             <input type="range" id="lambda-prox" name="lambda-prox" min="0" max="1" step="0.05" value="0.5"><span id="lambda-prox-val" class="ml-2 font-mono text-xs">0.5</span>
+                         </div>
+                          <div>
+                             <label for="lambda-bio" class="block font-medium text-slate-700">Biomechanics ($\lambda_{bio}$)</label>
+                             <input type="range" id="lambda-bio" name="lambda-bio" min="0" max="2" step="0.1" value="1.0"><span id="lambda-bio-val" class="ml-2 font-mono text-xs">1.0</span>
+                         </div>
+                          <div>
+                             <label for="lambda-gan" class="block font-medium text-slate-700">GAN Realism ($\lambda_{gan}$)</label>
+                             <input type="range" id="lambda-gan" name="lambda-gan" min="0" max="1" step="0.05" value="0.3"><span id="lambda-gan-val" class="ml-2 font-mono text-xs">0.3</span>
+                         </div>
+                          <div>
+                             <label for="lambda-latent" class="block font-medium text-slate-700">Latent Proximity ($\lambda_{latent}$)</label>
+                             <input type="range" id="lambda-latent" name="lambda-latent" min="0" max="0.5" step="0.01" value="0.05"><span id="lambda-latent-val" class="ml-2 font-mono text-xs">0.05</span>
+                         </div>
+                     </div>
+                     <div class="text-center mt-4">
+                        <button id="run-cf-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded transition duration-150 ease-in-out">
+                            Run Conceptual Counterfactual Search
+                        </button>
+                     </div>
+                 </div>
+
+                 <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                     <div>
+                        <h3 class="text-lg font-medium mb-2">4. Counterfactual Result</h3>
+                         <div id="cf-final-state" class="viz-placeholder h-32">
+                             [JS Viz: Show final counterfactual predicted angles (e.g., bars)]
+                        </div>
+                        <p class="text-xs text-center text-slate-500 mt-1">Final Prediction</p>
+                     </div>
+                      <div>
+                        <h3 class="text-lg font-medium mb-2">Generated Counterfactual EMG</h3>
+                         <div id="cf-emg-viz" class="viz-placeholder h-32">
+                             [JS Viz: Show the generated EMG pattern, maybe highlighting differences from original]
+                        </div>
+                        <p class="text-xs text-center text-slate-500 mt-1">Resulting EMG Pattern</p>
+                     </div>
+                 </div>
+            </section>
+
+            <section class="content-section">
+                 <h2 class="text-2xl font-semibold text-slate-800 mb-3">Mathematical Aspect: The Objective Function</h2>
+                 <p class="text-slate-700 leading-relaxed mb-4">The counterfactual search aims to minimize a total loss function ($\mathcal{L}_{total}$) by adjusting the latent vector $z$. This loss combines the different objectives, weighted by $\lambda$ values (which you can adjust conceptually above):</p>
+                 <div class="math-formula">
+                 $$
+                 \min_{z} \mathcal{L}_{total}(z) =
+                     \lambda_{model} \mathcal{L}_{model}(G(z)) +
+                     \lambda_{prox} \mathcal{L}_{prox}(G(z), x_{orig}) +
+                     \lambda_{bio} \mathcal{L}_{bio}(G(z)) +
+                     \lambda_{gan} \mathcal{L}_{gan}(G(z)) +
+                     \lambda_{latent} \mathcal{L}_{latent}(z, z_{initial})
+                 $$
+                 </div>
+                 <p class="text-slate-700 leading-relaxed">Where:</p>
+                 <ul class="list-disc list-inside ml-4 space-y-1 text-sm text-slate-600">
+                    <li>$z$ is the latent vector being optimized.</li>
+                    <li>$G(z)$ is the EMG generated from $z$.</li>
+                    <li>$x_{orig}$ is the original EMG signal.</li>
+                    <li>$\mathcal{L}_{model}$ measures the difference between the predictor's output for $G(z)$ and the target angles (e.g., Mean Squared Error).</li>
+                    <li>$\mathcal{L}_{prox}$ measures the distance between the generated EMG $G(z)$ and the original $x_{orig}$ (e.g., L1 or L2 norm).</li>
+                    <li>$\mathcal{L}_{bio}$ is the penalty for biomechanical implausibility (e.g., agonist/antagonist co-contraction).</li>
+                    <li>$\mathcal{L}_{gan}$ encourages the GAN Discriminator to classify $G(z)$ as real (e.g., Binary Cross-Entropy vs. target '1').</li>
+                    <li>$\mathcal{L}_{latent}$ measures the distance between the current $z$ and the initial $z_{initial}$ (e.g., L2 norm).</li>
+                 </ul>
+            </section>
+
+             <section class="content-section bg-slate-800 text-slate-200">
+                <h2 class="text-2xl font-semibold text-white mb-3">Summary</h2>
+                <p class="leading-relaxed">This interactive exploration demonstrates the core principles of predicting hand angles from sEMG and using advanced offline XAI techniques (GANs, Latent Space Counterfactuals) to understand and analyze the system's behavior. While the real-time prediction uses a fast, trained model, the explanations require more complex, computationally intensive offline analysis involving generative models and multi-objective optimization concepts.</p>
+            </section>
+
+        </main>
+
+        <footer class="mt-10 text-center text-slate-500 text-sm">
+            <p>Interactive explanation based on sEMG analysis concepts.</p>
+        </footer>
+    </div>
+
+    <script>
+        // --- Placeholder JavaScript for Interactivity ---
+        console.log("Interactive EMG XAI page loaded.");
+
+        // --- DOM Elements ---
+        const targetAngleSlider = document.getElementById('target-angle-slider');
+        const targetAngleValue = document.getElementById('target-angle-value');
+        const lambdaSliders = {
+            model: document.getElementById('lambda-model'),
+            prox: document.getElementById('lambda-prox'),
+            bio: document.getElementById('lambda-bio'),
+            gan: document.getElementById('lambda-gan'),
+            latent: document.getElementById('lambda-latent'),
+        };
+        const lambdaValues = {
+            model: document.getElementById('lambda-model-val'),
+            prox: document.getElementById('lambda-prox-val'),
+            bio: document.getElementById('lambda-bio-val'),
+            gan: document.getElementById('lambda-gan-val'),
+            latent: document.getElementById('lambda-latent-val'),
+        };
+        const startSimBtn = document.getElementById('start-sim-btn');
+        const runCfBtn = document.getElementById('run-cf-btn');
+
+        // --- Placeholder Viz Containers ---
+        const realtimeEmgViz = document.getElementById('realtime-emg-viz');
+        const realtimeWindowViz = document.getElementById('realtime-window-viz');
+        const realtimeAngleViz = document.getElementById('realtime-angle-viz');
+        const cfInitialStateViz = document.getElementById('cf-initial-state');
+        const cfSearchViz = document.getElementById('cf-search-viz');
+        const cfFinalStateViz = document.getElementById('cf-final-state');
+        const cfEmgViz = document.getElementById('cf-emg-viz');
+
+        // --- State ---
+        let isRealtimeSimulating = false;
+        let realtimeIntervalId = null;
+        let currentLambdas = { model: 1.0, prox: 0.5, bio: 1.0, gan: 0.3, latent: 0.05 };
+        let currentTargetAngle = 10;
+
+        // --- Event Listeners ---
+        targetAngleSlider.addEventListener('input', (event) => {
+            currentTargetAngle = event.target.value;
+            targetAngleValue.textContent = currentTargetAngle;
+            // Potentially update initial CF state viz if needed
+        });
+
+        for (const key in lambdaSliders) {
+            lambdaSliders[key].addEventListener('input', (event) => {
+                currentLambdas[key] = event.target.value;
+                lambdaValues[key].textContent = parseFloat(currentLambdas[key]).toFixed(2);
+                // Conceptually, this would change the balance in the CF search viz
+                updateCfSearchConcept();
+            });
+        }
+
+        startSimBtn.addEventListener('click', toggleRealtimeSimulation);
+        runCfBtn.addEventListener('click', runConceptualCfSearch);
+
+        // --- Simulation & Visualization Functions (Implementations Needed) ---
+
+        function toggleRealtimeSimulation() {
+            isRealtimeSimulating = !isRealtimeSimulating;
+            if (isRealtimeSimulating) {
+                startSimBtn.textContent = 'Stop Real-Time Simulation';
+                startSimBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                startSimBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+                // Start the simulation loop (e.g., using setInterval or requestAnimationFrame)
+                // Inside the loop: simulate data, update buffer, predict, update viz
+                realtimeIntervalId = setInterval(realtimeStep, 100); // Example interval
+                console.log("Real-time simulation started (conceptual)");
+                // Initialize visualizations
+                realtimeEmgViz.innerHTML = '<p class="text-sm animate-pulse">Streaming EMG...</p>';
+                realtimeWindowViz.innerHTML = '<p class="text-sm animate-pulse">Windowing...</p>';
+                realtimeAngleViz.innerHTML = '<p class="text-sm animate-pulse">Predicting...</p>';
+
+            } else {
+                startSimBtn.textContent = 'Start Real-Time Simulation';
+                startSimBtn.classList.remove('bg-red-600', 'hover:bg-red-700');
+                startSimBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                clearInterval(realtimeIntervalId);
+                console.log("Real-time simulation stopped.");
+                 // Reset visualizations
+                realtimeEmgViz.innerHTML = '[JS/D3 Animation: Scrolling multi-channel EMG signals]';
+                realtimeWindowViz.innerHTML = '[JS Animation: Window moving over EMG snippet]';
+                realtimeAngleViz.innerHTML = '[JS/D3 Animation: Bars or dials showing 14 predicted angles updating]';
+            }
+        }
+
+        function realtimeStep() {
+            // **IMPLEMENTATION NEEDED**
+            // 1. Simulate getting a new EMG chunk
+            // 2. Update a sliding window buffer (e.g., a JS array or deque-like structure)
+            // 3. If window is full:
+            //    a. Conceptually "predict" angles (use mock data/simple function)
+            //    b. Update realtimeEmgViz (show scrolling)
+            //    c. Update realtimeWindowViz (show window position)
+            //    d. Update realtimeAngleViz (show predicted angle bars/dials)
+            console.log("Real-time step (conceptual)");
+        }
+
+        function runConceptualCfSearch() {
+            console.log("Running conceptual counterfactual search with target:", currentTargetAngle, "and lambdas:", currentLambdas);
+            // **IMPLEMENTATION NEEDED**
+            // 1. Show some initial state in cfInitialStateViz
+            // 2. Animate the search process in cfSearchViz, conceptually showing influence of lambdas
+            cfSearchViz.innerHTML = '<p class="text-sm animate-pulse">Searching latent space...</p>';
+            // 3. After a simulated delay, show final results:
+            setTimeout(() => {
+                 cfSearchViz.innerHTML = '<p class="text-sm text-green-600">Search Complete!</p>';
+                 // Update cfFinalStateViz with mock final angles based on target
+                 cfFinalStateViz.innerHTML = `<p class="text-sm">Final Angles (Conceptual)<br/>Angle 2 ≈ ${parseFloat(y_pred_orig_mock[2]) + parseFloat(currentTargetAngle)}</p>`; // Mock update
+                 // Update cfEmgViz with a conceptual representation of changed EMG
+                 cfEmgViz.innerHTML = '<p class="text-sm">Generated EMG Pattern (Conceptual)</p>';
+                 console.log("Conceptual search finished.");
+            }, 2000); // Simulate search time
+        }
+
+        function updateCfSearchConcept() {
+             // **IMPLEMENTATION NEEDED**
+             // Visually indicate how changing lambdas might affect the search path/outcome
+             // in the cfSearchViz placeholder (e.g., change arrow directions/colors)
+             console.log("Updated conceptual lambda influence:", currentLambdas);
+        }
+
+        // --- Initial Setup ---
+        // Display initial lambda values
+        for (const key in lambdaSliders) {
+             lambdaValues[key].textContent = parseFloat(lambdaSliders[key].value).toFixed(2);
+             currentLambdas[key] = lambdaSliders[key].value;
+        }
+        // Display initial target angle value
+        targetAngleValue.textContent = targetAngleSlider.value;
+        currentTargetAngle = targetAngleSlider.value;
+
+        // Mock initial prediction for CF visualization placeholder
+        const y_pred_orig_mock = Array(14).fill(0).map((_,i) => 150 + Math.random()*10 - 5 + (i===2 ? -10 : 0)); // Example data
+        cfInitialStateViz.innerHTML = `<p class="text-sm">Initial Angles (Mock)<br/>Angle 2 ≈ ${y_pred_orig_mock[2].toFixed(1)}</p>`;
+
+
+    </script>
+
+</body>
+</html>
+<!-- End of HTML Document -->
