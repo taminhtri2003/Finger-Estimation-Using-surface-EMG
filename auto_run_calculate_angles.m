@@ -4,7 +4,7 @@ clearvars; % Clear existing variables from the workspace
 clc;       % Clear the command window
 
 % --- Configuration ---
-input_file_indices = 1:4; % Process files s5 through s10
+input_file_indices = 5:10; % Process files s5 through s10
 variables_to_load = {'finger_kinematics', 'dsfilt_emg'}; % Variables to load from input
 output_variable_name = 'joint_angles_cell'; % Name for the calculated angles variable
 
@@ -35,12 +35,12 @@ for i = input_file_indices
                     % Calculate joint angles using the provided function
                     fprintf('  Calculating joint angles...\n');
                     % Assign the result to the specific output variable name
-                    joint_angles_cell = calculate_joint_angles_ver2(finger_kinematics);
+                    joint_angles = calculate_joint_angles_ver2(finger_kinematics);
 
                     % Save the results (original loaded + calculated) to the new .mat file
                     fprintf('  Saving variables finger_kinematics, joint_angles_cell, dsfilt_emg to: %s\n', output_filename);
                     % Save the variables currently in the workspace
-                    save(output_filename, 'finger_kinematics', 'joint_angles_cell', 'dsfilt_emg');
+                    save(output_filename, 'finger_kinematics', 'joint_angles', 'dsfilt_emg');
 
                     fprintf('  Successfully processed and saved.\n');
                 else
